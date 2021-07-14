@@ -1,0 +1,5 @@
+Request	docable.html#Request	docable: Request	
+OnRequest	docable.html#OnRequest	docable: OnRequest	
+Settings	docable.html#Settings	docable: Settings	
+HttpBeastDefect	docable.html#HttpBeastDefect	docable: HttpBeastDefect	
+newSettings	docable.html#newSettings,string,int	docable: newSettings(port = Port(8080); bindAddr = &quot;&quot;; numThreads = 0;\n            domain = Domain.AF_INET; reusePort = true): Settings	

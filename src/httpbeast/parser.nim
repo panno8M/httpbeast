@@ -1,83 +1,88 @@
 import options, httpcore, parseutils
 
-proc parseHttpMethod*(data: string, start: int): Option[HttpMethod] =
-  ## Parses the data to find the request HttpMethod.
+func parseHttpMethod*(httpMsg: string, start: int): Option[HttpMethod] =
+  ## Parses the httpMsg to find the request HttpMethod.
 
   # HTTP methods are case sensitive.
   # (RFC7230 3.1.1. "The request method is case-sensitive.")
-  case data[start]
+
+  case httpMsg[start]
+  of 'D':
+    if httpMsg[start+1] == 'E' and httpMsg[start+2] == 'L' and
+       httpMsg[start+3] == 'E' and httpMsg[start+4] == 'T' and
+       httpMsg[start+5] == 'E':
+      return some(HttpDelete)
   of 'G':
-    if data[start+1] == 'E' and data[start+2] == 'T':
+    if httpMsg[start+1] == 'E' and httpMsg[start+2] == 'T':
       return some(HttpGet)
   of 'H':
-    if data[start+1] == 'E' and data[start+2] == 'A' and data[start+3] == 'D':
+    if httpMsg[start+1] == 'E' and httpMsg[start+2] == 'A' and httpMsg[start+3] == 'D':
       return some(HttpHead)
-  of 'P':
-    if data[start+1] == 'O' and data[start+2] == 'S' and data[start+3] == 'T':
-      return some(HttpPost)
-    if data[start+1] == 'U' and data[start+2] == 'T':
-      return some(HttpPut)
-    if data[start+1] == 'A' and data[start+2] == 'T' and
-       data[start+3] == 'C' and data[start+4] == 'H':
-      return some(HttpPatch)
-  of 'D':
-    if data[start+1] == 'E' and data[start+2] == 'L' and
-       data[start+3] == 'E' and data[start+4] == 'T' and
-       data[start+5] == 'E':
-      return some(HttpDelete)
   of 'O':
-    if data[start+1] == 'P' and data[start+2] == 'T' and
-       data[start+3] == 'I' and data[start+4] == 'O' and
-       data[start+5] == 'N' and data[start+6] == 'S':
+    if httpMsg[start+1] == 'P' and httpMsg[start+2] == 'T' and
+       httpMsg[start+3] == 'I' and httpMsg[start+4] == 'O' and
+       httpMsg[start+5] == 'N' and httpMsg[start+6] == 'S':
       return some(HttpOptions)
+  of 'P':
+    case httpMsg[start+1]
+    of 'A':
+      if httpMsg[start+2] == 'T' and httpMsg[start+3] == 'C' and httpMsg[start+4] == 'H':
+        return some(HttpPatch)
+    of 'O':
+      if httpMsg[start+2] == 'S' and httpMsg[start+3] == 'T':
+        return some(HttpPost)
+    of 'U':
+      if httpMsg[start+2] == 'T':
+        return some(HttpPut)
+    else: discard
   else: discard
 
   return none(HttpMethod)
 
-proc parsePath*(data: string, start: int): Option[string] =
-  ## Parses the request path from the specified data.
-  if unlikely(data.len == 0): return
+func parsePath*(httpMsg: string, start: int): Option[string] =
+  ## Parses the request path from the specified httpMsg.
+  if unlikely(httpMsg.len == 0): return
 
   # Find the first ' '.
   # We can actually start ahead a little here. Since we know
   # the shortest HTTP method: 'GET'/'PUT'.
   var i = start+2
-  while data[i] notin {' ', '\0'}: i.inc()
+  while httpMsg[i] notin {' ', '\0'}: i.inc()
 
-  if likely(data[i] == ' '):
+  if likely(httpMsg[i] == ' '):
     # Find the second ' '.
     i.inc() # Skip first ' '.
     let start = i
-    while data[i] notin {' ', '\0'}: i.inc()
+    while httpMsg[i] notin {' ', '\0'}: i.inc()
 
-    if likely(data[i] == ' '):
-      return some(data[start..<i])
+    if likely(httpMsg[i] == ' '):
+      return some(httpMsg[start..<i])
   else:
     return none(string)
 
-proc parseHeaders*(data: string, start: int): Option[HttpHeaders] =
-  if unlikely(data.len == 0): return
+func parseHeaders*(httpMsg: string, start: int): Option[HttpHeaders] =
+  if unlikely(httpMsg.len == 0): return
   var pairs: seq[(string, string)] = @[]
 
   var i = start
   # Skip first line containing the method, path and HTTP version.
-  while data[i] != '\l': i.inc
+  while httpMsg[i] != '\l': i.inc
 
   i.inc # Skip \l
 
   var value = false
   var current: (string, string) = ("", "")
-  while i < data.len:
-    case data[i]
+  while i < httpMsg.len:
+    case httpMsg[i]
     of ':':
       if value: current[1].add(':')
       value = true
     of ' ':
       if value:
         if current[1].len != 0:
-          current[1].add(data[i])
+          current[1].add(httpMsg[i])
       else:
-        current[0].add(data[i])
+        current[0].add(httpMsg[i])
     of '\c':
       discard
     of '\l':
@@ -90,38 +95,52 @@ proc parseHeaders*(data: string, start: int): Option[HttpHeaders] =
       current = ("", "")
     else:
       if value:
-        current[1].add(data[i])
+        current[1].add(httpMsg[i])
       else:
-        current[0].add(data[i])
+        current[0].add(httpMsg[i])
     i.inc()
 
   return none(HttpHeaders)
 
-proc parseContentLength*(data: string, start: int): int =
+func parseContentLength*(httpMsg: string, start: int): int =
   result = 0
 
-  let headers = data.parseHeaders(start)
+  let headers = httpMsg.parseHeaders(start)
   if headers.isNone(): return
 
   if unlikely(not headers.get().hasKey("Content-Length")): return
 
   discard headers.get()["Content-Length"].parseSaturatedNatural(result)
 
-iterator parseRequests*(data: string): int =
-  ## Yields the start position of each request in `data`.
+iterator findHeadersBeginnings*(httpMsg: string): int =
+  ## Yields the start position of each request in `httpMsg`.
   ##
   ## This is only necessary for support of HTTP pipelining. The assumption
   ## is that there is a request at position `0`, and that there MAY be another
-  ## request further in the data buffer.
-  var i = 0
-  yield i
+  ## request further in the httpMsg buffer.
+  yield 0
 
-  while i+3 < len(data):
-    if data[i+0] == '\c' and data[i+1] == '\l' and
-       data[i+2] == '\c' and data[i+3] == '\l':
-      if likely(i+4 == len(data)): break
-      i.inc(4)
-      if parseHttpMethod(data, i).isNone(): continue
-      yield i
+  var cBound = 4 # "c" means candidate.
+  template isBound(cBound: int): bool =
+    httpMsg[cBound-4] == '\c' and httpMsg[cBound-3] == '\l' and
+    httpMsg[cBound-2] == '\c' and httpMsg[cBound-1] == '\l'
+  template hasBoundPiece(cBound: int): bool = httpMsg[cBound-1] in {'\c', '\l'}
+  while cBound <= len(httpMsg):
+    if not cBound.hasBoundPiece: inc cBound, 4; continue
+    if not cBound.isBound: inc cBound; continue
 
-    i.inc()
+    let bound = cBound
+    inc cBound, 4
+
+    if likely(bound == len(httpMsg)): break
+    if parseHttpMethod(httpMsg, bound).isNone(): continue
+    yield bound
+
+  # while cBound < len(httpMsg):
+  #   if cBound.isBound:
+  #     let bound = cBound
+  #     if likely(bound == len(httpMsg)): break
+  #     if parseHttpMethod(httpMsg, bound).isNone(): continue
+  #     yield bound
+  #     inc cBound, 4
+  #   inc cBound

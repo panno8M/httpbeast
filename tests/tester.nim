@@ -22,7 +22,7 @@ proc readLoop(process: AsyncProcess, findSuccess: bool) {.async.} =
   # process.close()
 
 proc startServer(file: string) {.async.} =
-  var file = "tests" / file
+  var file = "examples" / file
   if not serverProcess.isNil and serverProcess.running:
     serverProcess.terminate()
     # TODO: https://github.com/cheatfate/asynctools/issues/9
