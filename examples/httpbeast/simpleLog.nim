@@ -1,7 +1,7 @@
 import logging
 import options, asyncdispatch
 
-import .. / src / httpbeast
+import httpigeon/httpbeast
 
 
 let logFile = open("tests/logFile.tmp", fmWrite)
@@ -20,7 +20,7 @@ proc onRequest(req: Request): Future[void] =
       req.send(Http404)
 
 block:
-  let settings = initSettings()
+  let settings = newSettings()
 
   run(onRequest, settings)
   logFile.close()

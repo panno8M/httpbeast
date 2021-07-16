@@ -34,9 +34,10 @@ import times # TODO this shouldn't be required. Nim bug?
 
 export httpcore
 
-import httpbeast/parser
+import parser
 
 type
+  ThreadLocalAdditionalArgsDeterminate* = proc(): pointer {.gcsafe, noSideEffect.}
   FdKind = enum
     Server, Client, Dispatcher
 
@@ -44,9 +45,9 @@ type
     fdKind: FdKind ## Determines the fd kind (server, client, dispatcher)
     ## - Client specific data.
     ## A queue of data that needs to be sent when the FD becomes writeable.
-    sendQueue: string
+    respondQueue: string
     ## The number of characters in `sendQueue` that have been sent already.
-    bytesSent: int
+    bytesResponded: int
     ## Big chunk of data read from client during request.
     httpMsg: string
     ## Determines whether `httpMsg` contains "\c\l\c\l".
@@ -60,7 +61,6 @@ type
     ## Identifier for current request. Mainly for better detection of cross-talk.
     requestID: uint
 
-type
   Request* = object
     selector: Selector[Data]
     client*: posix.SocketHandle
@@ -70,7 +70,7 @@ type
     # Identifier used to distinguish requests.
     requestID: uint
 
-  OnRequest* = proc (req: Request): Future[void] {.gcsafe.}
+  OnRequest* = proc (req: Request, threadLocalAdditionalArgsPtr: Option[pointer]): Future[void] {.gcsafe.}
 
   Settings* = object
     port*: Port
@@ -81,11 +81,12 @@ type
     reusePort: bool
       ## controls whether to fail with "Address already in use".
       ## Setting this to false will raise when `threads` are on.
+    threadLocalAdditionalArgsDeterminate: Option[ThreadLocalAdditionalArgsDeterminate]
 
   HttpBeastDefect* = ref object of Defect
 
 const
-  serverInfo = "HttpBeast"
+  serverInfo = "Httpigeon"
 
 # procs that decide num of threads to use ===
 type NumThreadsDeterminate = proc(): Natural {.noSideEffect.}
@@ -101,7 +102,9 @@ proc newSettings*(port = Port(8080),
                    bindAddr = "",
                    numThreadsDeterminate = automatic,
                    domain = Domain.AF_INET,
-                   reusePort = true): Settings =
+                   reusePort = true,
+                   threadLocalAdditionalArgsDeterminate: ThreadLocalAdditionalArgsDeterminate = nil
+                  ): Settings =
   Settings(
     port: port,
     bindAddr: bindAddr,
@@ -109,12 +112,14 @@ proc newSettings*(port = Port(8080),
     numThreads: numThreadsDeterminate(),
     loggers: getHandlers(),
     reusePort: reusePort,
+    threadLocalAdditionalArgsDeterminate: if threadLocalAdditionalArgsDeterminate == nil: none(ThreadLocalAdditionalArgsDeterminate)
+      else: some(threadLocalAdditionalArgsDeterminate)
   )
 
 func initData(fdKind: FdKind, ip = ""): Data =
   Data(fdKind: fdKind,
-       sendQueue: "",
-       bytesSent: 0,
+       respondQueue: "",
+       bytesResponded: 0,
        httpMsg: "",
        headersFinished: false,
        headersEndPos: -1, ## By default we assume the fast case: end of data.
@@ -204,7 +209,7 @@ proc handleClientClosure(selector: Selector[Data],
     selector.unregister(fd)
 
 
-proc sendAsIs_unsafe*(req: Request, data: string) {.inline.} =
+proc respondAsIs_unsafe*(req: Request, data: string) {.inline.} =
   ## Sends the specified data on the request socket.
   ##
   ## This function can be called as many times as necessary.
@@ -216,10 +221,10 @@ proc sendAsIs_unsafe*(req: Request, data: string) {.inline.} =
 
   block:
     let requestData {.inject.} = req.selector.getData(req.client).addr
-    requestData.sendQueue.add(data)
+    requestData.respondQueue.add(data)
   req.selector.updateHandle(req.client, {Event.Read, Event.Write})
 
-proc send*(req: Request, code: HttpCode, body: string, headers="") =
+proc respond*(req: Request, code: HttpCode, body: string, headers="") =
   ## Responds with the specified HttpCode and body.
   ##
   ## **Warning:** This can only be called once in the OnRequest callback.
@@ -239,25 +244,25 @@ proc send*(req: Request, code: HttpCode, body: string, headers="") =
         "Content-Length: $#\c\LServer: $#\c\LDate: $#$#\c\L\c\L$#"
       ) % [$code, $body.len, serverInfo, serverDate, otherHeaders, body]
 
-    requestData.sendQueue.add(text)
+    requestData.respondQueue.add(text)
   req.selector.updateHandle(req.client, {Event.Read, Event.Write})
 
-proc send*(req: Request, code: HttpCode, body: string, headers: HttpHeaders) =
+proc respond*(req: Request, code: HttpCode, body: string, headers: HttpHeaders) =
   var headerstrings: seq[string]
   for key, val in headers.table.pairs:
     headerstrings.add key & ": " & val.foldl(a & "; " & b)
-  send req, code, body, headerstrings.join("\c\L")
+  req.respond code, body, headerstrings.join("\c\L")
 
-proc send*(req: Request, code: HttpCode) =
+proc respond*(req: Request, code: HttpCode) =
   ## Responds with the specified HttpCode. The body of the response
   ## is the same as the HttpCode description.
-  req.send(code, $code)
+  req.respond(code, $code)
 
-proc send*(req: Request, body: string, code = Http200) {.inline.} =
+proc respond*(req: Request, body: string, code = Http200) {.inline.} =
   ## Sends a HTTP 200 OK response with the specified body.
   ##
   ## **Warning:** This can only be called once in the OnRequest callback.
-  req.send(code, body)
+  req.respond(code, body)
 
 proc httpMethod*(req: Request): Option[HttpMethod] {.inline.} =
   ## Parses the request's data to find the request HttpMethod.
@@ -276,7 +281,9 @@ proc isValidateRequest(req: Request): bool =
 
 proc processEvents(selector: Selector[Data],
                    readyKeys: array[64, ReadyKey], count: int,
-                   onRequest: OnRequest) =
+                   onRequest: OnRequest,
+                   threadLocalAdditionalArgsPtr: Option[pointer]
+                  ) =
   for rKey in readyKeys[0..<count]:
     let fd = rKey.fd
     var data: ptr Data = addr(selector.getData(fd))
@@ -340,9 +347,9 @@ proc processEvents(selector: Selector[Data],
             data.headersEndPos = headersEndPos
             data.headersFinished = true
             when not defined(release):
-              if data.sendQueue.len != 0:
+              if data.respondQueue.len != 0:
                 logging.warn("sendQueue isn't empty.")
-              if data.bytesSent != 0:
+              if data.bytesResponded != 0:
                 logging.warn("bytesSent isn't empty.")
 
             let waitingForBody = data.httpMsg.isNeedsBody and bodyInTransit(data)
@@ -363,9 +370,9 @@ proc processEvents(selector: Selector[Data],
                   if data.requestID == request.requestID:
                     data.headersFinished = false
 
-                if not request.isValidateRequest(): request.send(Http501)
+                if not request.isValidateRequest(): request.respond(Http501)
                 else:
-                  data.reqFut = onRequest(request)
+                  data.reqFut = onRequest(request, threadLocalAdditionalArgsPtr)
                   if data.reqFut.isNil: validateResponse()
                   else:
                     data.reqFut.addCallback(
@@ -378,11 +385,11 @@ proc processEvents(selector: Selector[Data],
             # Assume there is nothing else for us right now and break.
             break
       elif Event.Write in rKey.events:
-        assert data.sendQueue.len > 0
-        assert data.bytesSent < data.sendQueue.len
+        assert data.respondQueue.len > 0
+        assert data.bytesResponded < data.respondQueue.len
         # Write the sendQueue.
-        let leftover = data.sendQueue.len-data.bytesSent
-        let ret = send(fd.SocketHandle, addr data.sendQueue[data.bytesSent],
+        let leftover = data.respondQueue.len-data.bytesResponded
+        let ret = send(fd.SocketHandle, addr data.respondQueue[data.bytesResponded],
                        leftover, 0)
         if ret == -1:
           # Error!
@@ -394,11 +401,11 @@ proc processEvents(selector: Selector[Data],
             break
           raiseOSError(lastError)
 
-        data.bytesSent.inc(ret)
+        data.bytesResponded.inc(ret)
 
-        if data.sendQueue.len == data.bytesSent:
-          data.bytesSent = 0
-          data.sendQueue.setLen(0)
+        if data.respondQueue.len == data.bytesResponded:
+          data.bytesResponded = 0
+          data.respondQueue.setLen(0)
           data.httpMsg.setLen(0)
           selector.updateHandle(fd.SocketHandle, {Event.Read})
       else:
@@ -432,10 +439,14 @@ proc eventLoop(params: (OnRequest, Settings)) =
   discard updateDate(0.AsyncFD)
   asyncdispatch.addTimer(1000, false, updateDate)
 
+  var threadLocalAdditionalArgsPtr: Option[pointer] = if settings.threadLocalAdditionalArgsDeterminate.isNone(): none(pointer)
+    else: some(settings.threadLocalAdditionalArgsDeterminate.get()())
+
+
   var events: array[64, ReadyKey]
   while true:
     let ret = selector.selectInto(-1, events)
-    processEvents(selector, events, ret, onRequest)
+    processEvents(selector, events, ret, onRequest, threadLocalAdditionalArgsPtr)
 
     # Ensure callbacks list doesn't grow forever in asyncdispatch.
     # See https://github.com/nim-lang/Nim/issues/7532.

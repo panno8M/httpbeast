@@ -1,5 +1,0 @@
-parseHttpMethod	httpbeast/parser.html#parseHttpMethod,string,int	parser: parseHttpMethod(data: string; start: int): Option[HttpMethod]	
-parsePath	httpbeast/parser.html#parsePath,string,int	parser: parsePath(data: string; start: int): Option[string]	
-parseHeaders	httpbeast/parser.html#parseHeaders,string,int	parser: parseHeaders(data: string; start: int): Option[HttpHeaders]	
-parseContentLength	httpbeast/parser.html#parseContentLength,string,int	parser: parseContentLength(data: string; start: int): int	
-parseRequests	httpbeast/parser.html#parseRequests.i,string	parser: parseRequests(data: string): int	
