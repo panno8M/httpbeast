@@ -75,9 +75,8 @@ type
     else: discard
 
   # Exceptions
-  MappingError* = object of Exception ## Indicates an error while creating a new mapping
+  MappingError* = object of ValueError ## Indicates an error while creating a new mapping
 
-func raiseMappingError(msg: string) = raise newException(MappingError, msg)
 func raiseMappingError(condition: bool; msg: string) =
   if condition: raise newException(MappingError, msg)
 
