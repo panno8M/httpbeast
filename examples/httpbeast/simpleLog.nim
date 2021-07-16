@@ -14,10 +14,10 @@ proc onRequest(req: Request): Future[void] =
     of "/":
       info("Requested /")
       flushFile(logFile)  # Only errors above lvlError auto-flush
-      req.send("Hello World")
+      req.respond("Hello World")
     else:
       error("404")
-      req.send(Http404)
+      req.respond(Http404)
 
 block:
   let settings = newSettings()

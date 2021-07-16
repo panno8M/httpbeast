@@ -37,7 +37,6 @@ export httpcore
 import parser
 
 type
-  ThreadLocalAdditionalArgsDeterminate* = proc(): pointer {.gcsafe, noSideEffect.}
   FdKind = enum
     Server, Client, Dispatcher
 
@@ -70,7 +69,7 @@ type
     # Identifier used to distinguish requests.
     requestID: uint
 
-  OnRequest* = proc (req: Request, threadLocalAdditionalArgsPtr: Option[pointer]): Future[void] {.gcsafe.}
+  OnRequest* = proc (req: Request): Future[void] {.gcsafe.}
 
   Settings* = object
     port*: Port
@@ -81,7 +80,6 @@ type
     reusePort: bool
       ## controls whether to fail with "Address already in use".
       ## Setting this to false will raise when `threads` are on.
-    threadLocalAdditionalArgsDeterminate: Option[ThreadLocalAdditionalArgsDeterminate]
 
   HttpBeastDefect* = ref object of Defect
 
@@ -103,7 +101,6 @@ proc newSettings*(port = Port(8080),
                    numThreadsDeterminate = automatic,
                    domain = Domain.AF_INET,
                    reusePort = true,
-                   threadLocalAdditionalArgsDeterminate: ThreadLocalAdditionalArgsDeterminate = nil
                   ): Settings =
   Settings(
     port: port,
@@ -112,8 +109,6 @@ proc newSettings*(port = Port(8080),
     numThreads: numThreadsDeterminate(),
     loggers: getHandlers(),
     reusePort: reusePort,
-    threadLocalAdditionalArgsDeterminate: if threadLocalAdditionalArgsDeterminate == nil: none(ThreadLocalAdditionalArgsDeterminate)
-      else: some(threadLocalAdditionalArgsDeterminate)
   )
 
 func initData(fdKind: FdKind, ip = ""): Data =
@@ -282,7 +277,6 @@ proc isValidateRequest(req: Request): bool =
 proc processEvents(selector: Selector[Data],
                    readyKeys: array[64, ReadyKey], count: int,
                    onRequest: OnRequest,
-                   threadLocalAdditionalArgsPtr: Option[pointer]
                   ) =
   for rKey in readyKeys[0..<count]:
     let fd = rKey.fd
@@ -372,7 +366,7 @@ proc processEvents(selector: Selector[Data],
 
                 if not request.isValidateRequest(): request.respond(Http501)
                 else:
-                  data.reqFut = onRequest(request, threadLocalAdditionalArgsPtr)
+                  data.reqFut = onRequest(request)
                   if data.reqFut.isNil: validateResponse()
                   else:
                     data.reqFut.addCallback(
@@ -439,14 +433,10 @@ proc eventLoop(params: (OnRequest, Settings)) =
   discard updateDate(0.AsyncFD)
   asyncdispatch.addTimer(1000, false, updateDate)
 
-  var threadLocalAdditionalArgsPtr: Option[pointer] = if settings.threadLocalAdditionalArgsDeterminate.isNone(): none(pointer)
-    else: some(settings.threadLocalAdditionalArgsDeterminate.get()())
-
-
   var events: array[64, ReadyKey]
   while true:
     let ret = selector.selectInto(-1, events)
-    processEvents(selector, events, ret, onRequest, threadLocalAdditionalArgsPtr)
+    processEvents(selector, events, ret, onRequest)
 
     # Ensure callbacks list doesn't grow forever in asyncdispatch.
     # See https://github.com/nim-lang/Nim/issues/7532.

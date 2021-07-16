@@ -7,12 +7,12 @@ proc onRequest(req: Request): Future[void] =
     case req.path.get()
     of "/json":
       const data = $(%*{"message": "Hello, World!"})
-      req.send(Http200, data)
+      req.respond(Http200, data)
     of "/plaintext":
       const data = "Hello, World!"
       const headers = "Content-Type: text/plain"
-      req.send(Http200, data, headers)
+      req.respond(Http200, data, headers)
     else:
-      req.send(Http404)
+      req.respond(Http404)
 
 run(onRequest)

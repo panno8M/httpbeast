@@ -5,7 +5,7 @@ import httpigeon/httpbeast
 proc nonAwaitedDelayedSend(req: Request, id: string) {.async.} =
   await sleepAsync(10_000)
   echo("Sleep finished, responding to request ", id)
-  req.send("Delayed " & id)
+  req.respond("Delayed " & id)
 
 var lastFd = -1
 proc onRequest(req: Request) {.async.} =
@@ -13,12 +13,12 @@ proc onRequest(req: Request) {.async.} =
     let id = req.path.get()
     case id
     of "/":
-      req.send("Immediate")
+      req.respond("Immediate")
     of "/1", "/2":
       # TODO: Can we replace this sleep?
       await sleepAsync(1_000)
       echo("Sleep finished, responding to request ", id)
-      req.send("Delayed " & id)
+      req.respond("Delayed " & id)
     of "/close_me/1", "/close_me/2":
       # To reproduce this bug we expect the OS to reuse the OS.
       if lastFd == -1:
@@ -35,7 +35,7 @@ proc onRequest(req: Request) {.async.} =
       await sleepAsync(1_000)
       echo("Sleep finished, responding to request ", id)
       try:
-        req.send("Delayed " & id)
+        req.respond("Delayed " & id)
       except HttpBeastDefect:
         return
       except:

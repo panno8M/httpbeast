@@ -8,16 +8,16 @@ proc onRequest(req: Request) {.async.} =
     of "/":
       var client = newAsyncHttpClient()
       let content = await client.getContent("http://localhost:8080/content")
-      req.send($content)
+      req.respond($content)
     of "/content":
-      req.send("Hi there!")
+      req.respond("Hi there!")
     else:
-      req.send(Http404)
+      req.respond(Http404)
   elif req.httpMethod == some(HttpPost):
     case req.path.get()
     of "/":
-      req.send("Successful POST! Data=" & $req.body.get().len)
+      req.respond("Successful POST! Data=" & $req.body.get().len)
     else:
-      req.send(Http404)
+      req.respond(Http404)
 
 run(onRequest)
