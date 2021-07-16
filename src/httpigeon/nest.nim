@@ -108,7 +108,7 @@ func `==`[H](node : PatternNode[H], knot : MapperKnot) : bool =
     result = case node.kind
     of ptrnText, ptrnParam: node.value == knot.value
     of ptrnStartHeaderConstraint: node.headerName == knot.headerName
-    else: discard
+    else: result
 
 #
 # Debugging routines
@@ -398,8 +398,8 @@ proc extractEncodedParams(input : string) : StringTableRef =
     if equalIndex == -1: #no equals, just a boolean "existance" variable
       result[paramValuePair] = "" #just insert a record into the param table to indicate that it exists
     else: #is a 'setter' parameter
-      let paramName = paramValuePair[0..equalIndex - 1]
-      let paramValue = paramValuePair[equalIndex + 1.. ^1]
+      let paramName = paramValuePair[0..equalIndex-1]
+      let paramValue = paramValuePair[equalIndex+1..^1]
       result[paramName] = paramValue
 
 #
