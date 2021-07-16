@@ -1,5 +1,5 @@
 import httpigeon/httpbeast
-import nest
+import httpigeon/nest
 
 export httpbeast, nest
 
