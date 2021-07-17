@@ -1,4 +1,7 @@
 import macros
+import asyncdispatch
+import options
+import uri
 from strformat import `&`
 
 import httpigeon/httpbeast
@@ -6,10 +9,41 @@ import httpigeon/nest
 
 export httpbeast, nest
 
-type Response* = object
-  code*: HttpCode
-  additionalHeaders*: HttpHeaders
-  body*: string
+type
+  RequestHandler* = proc(
+      req: Request;
+      args: RoutingArgs;
+    ): Response {.gcsafe.}
+
+  Response* = object
+    code*: HttpCode
+    additionalHeaders*: HttpHeaders
+    body*: string
+  Pigeon* = ref object
+    router: Router[RequestHandler]
+    serverSettings: Settings
+
+var routerPtr: ptr Router[RequestHandler]
+
+func newPigeon*(serverSettings = newSettings()): Pigeon =
+  Pigeon(router: newRouter[RequestHandler](), serverSettings: serverSettings)
+
+proc respond*(req: Request; response: Response) = req.respond(response.code, response.body, response.additionalHeaders)
+
+proc run*(pigeon: Pigeon) =
+  pigeon.router.compress()
+  routerPtr = pigeon.router.addr
+  proc onRequest(req: Request) {.gcsafe, async.}  =
+    if req.httpMethod.isNone or req.path.isNone: req.respond(Http404)
+    let routingResult = routerPtr[].route(req.httpMethod.get(), req.path.get().parseUri())
+
+    if routingResult.status == routingFailure:
+      req.respond(Http404)
+      return
+
+    req.respond routingResult.handler(req, routingResult.arguments)
+
+  run(onRequest)
 
 proc newResponse*(
       code: HttpCode;
@@ -24,17 +58,12 @@ proc newResponse*(
 proc newResponse*(body: string): Response = newResponse(Http200, newHttpHeaders(), body)
 proc newResponse*(additionalHeaders: HttpHeaders; body: string): Response = newResponse(Http200, additionalHeaders, body)
 
-proc respond*(req: Request; response: Response) = req.respond(response.code, response.body, response.additionalHeaders)
+proc map*(pigeon: Pigeon; handler: RequestHandler; httpMethod: HttpMethod; pattern: string; headers: HttpHeaders = nil) =
+  pigeon.router.map(handler, httpMethod, pattern, headers)
 
 template `$:`*(keyValuePairs: openArray[tuple[key: string, val: string]]): HttpHeaders = newHttpHeaders(keyValuePairs)
 
-type RequestHandler* = proc(
-    req: Request;
-    args: RoutingArgs;
-  ): Response {.gcsafe.}
-
-
-macro mappingOn*[T](router: Router[T]; path = "/"; body: untyped): untyped =
+macro mappingOn*(pigeon: Pigeon; path = "/"; body: untyped): untyped =
   type RequestHook = object
     httpMethod: NimNode
     processBody: NimNode
@@ -43,7 +72,6 @@ macro mappingOn*[T](router: Router[T]; path = "/"; body: untyped): untyped =
     body: NimNode
   var requestHooks = newSeq[RequestHook]()
   var nestHooks = newSeq[NestHook]()
-  result = newStmtList()
   for topStmt in body:
     case topStmt.kind:
     of nnkCommand:
@@ -67,10 +95,11 @@ macro mappingOn*[T](router: Router[T]; path = "/"; body: untyped): untyped =
 
     else: discard
   block rendering:
+    result = newStmtList()
     for requestHook in requestHooks:
       result.add newCall(
         newIdentNode("map"),
-        router,
+        pigeon,
         newNimNode(nnkLambda)
           .add(newEmptyNode())
           .add(newEmptyNode())
@@ -90,16 +119,16 @@ macro mappingOn*[T](router: Router[T]; path = "/"; body: untyped): untyped =
     for nestHook in nestHooks:
       result.add newCall(
         newIdentNode("mappingOn"),
-        router,
+        pigeon,
         newStrLitNode(path.strVal & nestHook.path.strVal & "/"),
         nestHook.body,
       )
 
-macro mapping*[T](router: Router[T]; body: untyped): untyped =
+macro mapping*(pigeon: Pigeon; body: untyped): untyped =
   newStmtList(
     newCall(
       newIdentNode("mappingOn"),
-      router,
+      pigeon,
       newStrLitNode("/"),
       body,
     )

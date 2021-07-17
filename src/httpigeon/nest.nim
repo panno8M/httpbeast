@@ -216,7 +216,7 @@ func generateRope(pattern: string, startIndex: Natural = 0): seq[MapperKnot] {.r
 # Node procedures. A pattern node represents part of a chain representing a matchable path
 #
 
-func terminatingPatternNode[H](
+proc terminatingPatternNode[H](
   oldNode : PatternNode[H],
   knot : MapperKnot,
   handler : H
@@ -241,7 +241,7 @@ func terminatingPatternNode[H](
   if not result.isLeaf:
     result.children = oldNode.children
 
-func parentalPatternNode[H](oldNode : PatternNode[H]) : PatternNode[H] =
+proc parentalPatternNode[H](oldNode : PatternNode[H]) : PatternNode[H] =
   ## Turns the given node into a parent node. If it not a leaf node, this returns a new copy of the input.
   result = case oldNode.kind
   of ptrnText:
@@ -287,7 +287,7 @@ func chainTree[H](rope : seq[MapperKnot], handler : H) : PatternNode[H] =
   else:
     result.children = @[chainTree(rope[1.. ^1], handler)] #continue the chain
 
-func merge[H](
+proc merge[H](
   node : PatternNode[H],
   rope : seq[MapperKnot],
   handler : H
@@ -353,7 +353,7 @@ func contains[H](
 # Mapping procedures
 #
 
-func map*[H](
+proc map*[H](
   router : Router[H],
   handler : H,
   httpMethod: HttpMethod,
@@ -405,7 +405,7 @@ proc extractEncodedParams(input : string) : StringTableRef =
 #
 # Compression routines, compression makes matching more efficient. Once compressed, a router is immutable
 #
-func compress[H](node : PatternNode[H]) : PatternNode[H] =
+proc compress[H](node : PatternNode[H]) : PatternNode[H] =
   ## Finds sequences of single ptrnText nodes and combines them to reduce the depth of the tree
   if node.isLeaf: #if it's a leaf, there are clearly no descendents, and if it is a terminator then compression will alter the behavior
     return node
@@ -419,7 +419,7 @@ func compress[H](node : PatternNode[H]) : PatternNode[H] =
   result = node
   result.children = map(result.children, compress)
 
-func compress*[H](router : Router[H]) =
+proc compress*[H](router : Router[H]) =
   ## Compresses the entire contents of the given ``Router``. Successive calls will recompress, but may not be efficient, so use this only when mapping is complete for the best effect
   for index, existing in pairs(router.verbTrees):
     router.verbTrees[index] = compress(existing)
@@ -428,7 +428,7 @@ func compress*[H](router : Router[H]) =
 # Procedures to match against paths
 #
 
-func matchTree[H](
+proc matchTree[H](
   head : PatternNode[H],
   path : string,
   headers : HttpHeaders,
@@ -515,7 +515,7 @@ func matchTree[H](
 
   result = RoutingResult[H](status:routingFailure)
 
-func route*[H](
+proc route*[H](
   router : Router[H],
   requestMethod : HttpMethod,
   requestUri : URI,
