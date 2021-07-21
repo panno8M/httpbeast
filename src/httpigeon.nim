@@ -1,34 +1,37 @@
 import macros
 import asyncdispatch
 import options
-import uri
+import tables
+import strutils
+from uri import parseUri
 from strformat import `&`
 
 import httpigeon/httpbeast
 import httpigeon/nest
+import httpigeon/extensions
+import httpigeon/basic
 
-export httpbeast, nest
-
+export httpbeast, nest, basic
 type
-  RequestHandler* = proc(
-      req: Request;
-      args: RoutingArgs;
-    ): Response {.gcsafe.}
-
-  Response* = object
-    code*: HttpCode
-    additionalHeaders*: HttpHeaders
-    body*: string
   Pigeon* = ref object
     router: Router[RequestHandler]
     serverSettings: Settings
+    extensions: Option[seq[Extension]]
 
 var routerPtr: ptr Router[RequestHandler]
 
-func newPigeon*(serverSettings = newSettings()): Pigeon =
-  Pigeon(router: newRouter[RequestHandler](), serverSettings: serverSettings)
+func newPigeon*(serverSettings = newSettings(); extensions: Option[seq[Extension]] = none(seq[Extension])): Pigeon =
+  Pigeon(router: newRouter[RequestHandler](),
+    serverSettings: serverSettings,
+    extensions: extensions)
 
-proc respond*(req: Request; response: Response) = req.respond(response.code, response.body, response.additionalHeaders)
+func parseBody*(body: string): Table[string, string] =
+  if body == "": return
+  let params = body.split("&")
+  for param in params:
+    var keyval = param.split("=", 1)
+    if keyval.len < 2: continue
+    result[keyval[0]] = keyval[1]
 
 proc run*(pigeon: Pigeon) =
   pigeon.router.compress()
@@ -38,25 +41,21 @@ proc run*(pigeon: Pigeon) =
     let routingResult = routerPtr[].route(req.httpMethod.get(), req.path.get().parseUri())
 
     if routingResult.status == routingFailure:
-      req.respond(Http404)
+      var responseFailure: Response = newResponse(Http404)
+      if pigeon.extensions.isSome:
+        # discard
+        for ext in pigeon.extensions.get():
+          if ext.onRoutingFailure.isSome:
+            {.gcsafe.}:
+              let oResponse = ext.onRoutingFailure.get()(req)
+              if oResponse.isSome:
+                responseFailure = oResponse.get()
+      req.respond(responseFailure)
       return
 
     req.respond routingResult.handler(req, routingResult.arguments)
 
   run(onRequest)
-
-proc newResponse*(
-      code: HttpCode;
-      additionalHeaders: HttpHeaders;
-      body: string;
-    ): Response =
-  Response(
-    code: code,
-    additionalHeaders: additionalHeaders,
-    body: body
-  )
-proc newResponse*(body: string): Response = newResponse(Http200, newHttpHeaders(), body)
-proc newResponse*(additionalHeaders: HttpHeaders; body: string): Response = newResponse(Http200, additionalHeaders, body)
 
 proc map*(pigeon: Pigeon; handler: RequestHandler; httpMethod: HttpMethod; pattern: string; headers: HttpHeaders = nil) =
   pigeon.router.map(handler, httpMethod, pattern, headers)
@@ -115,7 +114,7 @@ macro mappingOn*(pigeon: Pigeon; path = "/"; body: untyped): untyped =
         requestHook.httpMethod,
         newStrLitNode(path.strVal),
       )
-      echo &"mapping: {path.strVal} => {requestHook.httpMethod}"
+      echo &"mapping: {($requestHook.httpMethod)[4..^1]:6}: {path.strVal}"
     for nestHook in nestHooks:
       result.add newCall(
         newIdentNode("mappingOn"),

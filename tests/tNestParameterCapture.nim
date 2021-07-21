@@ -6,16 +6,16 @@ suite "Parameter Capture":
 
   test "One query string parameter":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/")
-    let result = r.route("GET", parseUri("/?param1=value1"))
+    r.map(testHandler, HttpGet, "/")
+    let result = r.route(HttpGet, parseUri("/?param1=value1"))
     check(result.status == routingSuccess)
     check(result.arguments.queryArgs.hasKey("param1"))
     check(result.arguments.queryArgs["param1"] == "value1")
 
   test "Many query string parameters":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/")
-    let result = r.route("GET", parseUri("/?param1=value1&param2=value2"))
+    r.map(testHandler, HttpGet, "/")
+    let result = r.route(HttpGet, parseUri("/?param1=value1&param2=value2"))
     check(result.status == routingSuccess)
     check(result.arguments.queryArgs.hasKey("param1"))
     check(result.arguments.queryArgs["param1"] == "value1")
@@ -24,8 +24,8 @@ suite "Parameter Capture":
 
   test "Boolean query parameter":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/")
-    let result = r.route("GET", parseUri("/?param1=value1&param2"))
+    r.map(testHandler, HttpGet, "/")
+    let result = r.route(HttpGet, parseUri("/?param1=value1&param2"))
     check(result.status == routingSuccess)
     check(result.arguments.queryArgs.hasKey("param1"))
     check(result.arguments.queryArgs["param1"] == "value1")
@@ -33,16 +33,16 @@ suite "Parameter Capture":
 
   test "Query param plus headers":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/", newHttpHeaders({"content-type": "text/plain"}))
-    let result = r.route("GET", parseUri("/?param1=value1"), newHttpHeaders({"content-type": "text/plain"}))
+    r.map(testHandler, HttpGet, "/", newHttpHeaders({"content-type": "text/plain"}))
+    let result = r.route(HttpGet, parseUri("/?param1=value1"), newHttpHeaders({"content-type": "text/plain"}))
     check(result.status == routingSuccess)
     check(result.arguments.queryArgs.hasKey("param1"))
     check(result.arguments.queryArgs["param1"] == "value1")
 
   test "Query and path params at the same time":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/{pathParam1}")
-    let result = r.route("GET", parseUri("/pathVal?queryParam1=queryVal"))
+    r.map(testHandler, HttpGet, "/{pathParam1}")
+    let result = r.route(HttpGet, parseUri("/pathVal?queryParam1=queryVal"))
     check(result.status == routingSuccess)
     check(result.arguments.queryArgs.hasKey("queryParam1"))
     check(result.arguments.queryArgs["queryParam1"] == "queryVal")
@@ -51,16 +51,16 @@ suite "Parameter Capture":
 
   test "Path param that consumes entire path":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/{pathParam1}$")
-    let result = r.route("GET", parseUri("/foo/bar/baz"))
+    r.map(testHandler, HttpGet, "/{pathParam1}$")
+    let result = r.route(HttpGet, parseUri("/foo/bar/baz"))
     check(result.status == routingSuccess)
     check(result.arguments.pathArgs.hasKey("pathParam1"))
     check(result.arguments.pathArgs["pathParam1"] == "foo/bar/baz")
 
   test "Path param combined with consuming path param":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/{pathParam1}/{pathParam2}$")
-    let result = r.route("GET", parseUri("/foo/bar/baz"))
+    r.map(testHandler, HttpGet, "/{pathParam1}/{pathParam2}$")
+    let result = r.route(HttpGet, parseUri("/foo/bar/baz"))
     check(result.status == routingSuccess)
     check(result.arguments.pathArgs.hasKey("pathParam1"))
     check(result.arguments.pathArgs["pathParam1"] == "foo")
@@ -69,8 +69,8 @@ suite "Parameter Capture":
 
   test "Path param combined with consuming wildcard":
     let r = newRouter[proc()]()
-    r.map(testHandler, $GET, "/{pathParam1}/*$")
-    let result = r.route("GET", parseUri("/foo/bar/baz"))
+    r.map(testHandler, HttpGet, "/{pathParam1}/*$")
+    let result = r.route(HttpGet, parseUri("/foo/bar/baz"))
     check(result.status == routingSuccess)
     check(result.arguments.pathArgs.hasKey("pathParam1"))
     check(result.arguments.pathArgs["pathParam1"] == "foo")

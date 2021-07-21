@@ -1,4 +1,5 @@
 import options, asyncdispatch, nativesockets, strutils
+from os import sleep
 
 import httpigeon/httpbeast
 
@@ -16,7 +17,7 @@ proc onRequest(req: Request) {.async.} =
       req.respond("Immediate")
     of "/1", "/2":
       # TODO: Can we replace this sleep?
-      await sleepAsync(1_000)
+      sleep(1000)
       echo("Sleep finished, responding to request ", id)
       req.respond("Delayed " & id)
     of "/close_me/1", "/close_me/2":
@@ -32,10 +33,11 @@ proc onRequest(req: Request) {.async.} =
       if id.endsWith("/1"):
         req.forget()
         req.client.close()
-      await sleepAsync(1_000)
+      sleep(1000)
       echo("Sleep finished, responding to request ", id)
       try:
         req.respond("Delayed " & id)
+        return
       except HttpBeastDefect:
         return
       except:

@@ -9,10 +9,10 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 0.18.0"
+requires "RxNim"
 
 # Test dependencies
 requires "asynctools#0e6bdc3ed5bae8c7cc9"
-
 task helloworld, "Compiles and executes the hello world server.":
   exec "nim c -d:release --gc:boehm -r tests/helloworld"
 
