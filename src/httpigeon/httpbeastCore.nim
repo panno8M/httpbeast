@@ -34,26 +34,29 @@ type
     Client
     Dispatcher
 
-  Data = object
+  ClientData = object
+    ## - Client specific data.
+    ## A queue of data that needs to be sent when the FD becomes writeable.
+    respondQueue: string
+    ## The number of characters in `sendQueue` that have been sent already.
+    bytesResponded: int
+    ## Big chunk of data read from client during request.
+    httpMsg: string
+    ## Determines whether `httpMsg` contains "\c\l\c\l".
+    headersFinished: bool
+    ## Determines position of the end of "\c\l\c\l".
+    headersEndPos: int
+    ## The address that a `client` connects from.
+    ip: string
     ## Future for onRequest handler (may be nil).
     reqFut: Future[void]
     ## Identifier for current request. Mainly for better detection of cross-talk.
     requestID: uint
+
+  Data = object
     case fdKind: FdKind ## Determines the fd kind (server, client, dispatcher)
     of Client:
-      ## - Client specific data.
-      ## A queue of data that needs to be sent when the FD becomes writeable.
-      respondQueue: string
-      ## The number of characters in `sendQueue` that have been sent already.
-      bytesResponded: int
-      ## Big chunk of data read from client during request.
-      httpMsg: string
-      ## Determines whether `httpMsg` contains "\c\l\c\l".
-      headersFinished: bool
-      ## Determines position of the end of "\c\l\c\l".
-      headersEndPos: int
-      ## The address that a `client` connects from.
-      ip: string
+      clientData: ClientData
     else: discard
 
   Request* = object
@@ -85,9 +88,11 @@ const
 func newData(fdKind: FdKind; ip = ""): Data =
   case fdKind
   of Client:
-    Data(fdKind: fdKind,
-         headersEndPos: -1, ## By default we assume the fast case: end of data.
-         ip: ip
+    Data( fdKind: fdKind,
+          clientData: ClientData(
+            headersEndPos: -1, ## By default we assume the fast case: end of data.
+            ip: ip
+          )
         )
   else:
     Data(fdKind: fdKind)
@@ -131,7 +136,7 @@ func hasCorrectHeaders(httpMsg: string; outHeadersEndPos: var int): bool =
     outHeadersEndPos = candidateEndPos
     return true
 
-func bodyInTransit(data: ptr Data): bool =
+func bodyInTransit(data: ptr ClientData): bool =
   assert data.httpMsg.isNeedsBody, "Calling bodyInTransit now is inefficient."
   assert data.headersFinished
 
@@ -160,17 +165,16 @@ proc forgetCompletedRequest( selector: Selector[Data];
                            ) =
   # TODO: Logging that the socket was closed.
 
-  proc hasRequestInProcess(data: ptr Data): bool =
-    case data.fdKind
-    of Client:
-      (not data.reqFut.isNil) and (not data.reqFut.finished)
-    else: false
+  template hasRequestInProcess(data: ClientData): bool =
+    (not data.reqFut.isNil) and (not data.reqFut.finished)
 
   # TODO: Can POST body be sent with Connection: Close?
   var data: ptr Data = addr selector.getData(fd)
-  if data.hasRequestInProcess:
+  if data.fdKind != Client: return
+
+  if data.clientData.hasRequestInProcess:
     # Close the socket only once the `onRequest` callback completes.
-    data.reqFut.addCallback (_: Future[void]) => fd.close()
+    data.clientData.reqFut.addCallback (_: Future[void]) => fd.close()
     # Unregister fd so that we don't receive any more events for it.
     # Once we do so the `data` will no longer be accessible.
     selector.unregister(fd)
@@ -187,7 +191,8 @@ proc respond(req: Request; code: HttpCode; body, headers = "") =
   if req.client notin req.selector: return
 
   block:
-    let requestData {.inject.} = req.selector.getData(req.client).addr
+    let data {.inject.} = req.selector.getData(req.client).addr
+    template requestData(): untyped = data.clientData
     assert requestData.headersFinished, "Selector not ready to send."
     if requestData.requestID != req.requestID:
       raise HttpBeastDefect(msg: "You are attempting to send data to a stale request.")
@@ -204,7 +209,7 @@ proc respond(req: Request; code: HttpCode; body, headers = "") =
 
 proc httpMethod(req: Request): Option[HttpMethod] {.inline.} =
   ## Parses the request's data to find the request HttpMethod.
-  parseHttpMethod(req.selector.getData(req.client).httpMsg, req.start)
+  parseHttpMethod(req.selector.getData(req.client).clientData.httpMsg, req.start)
 
 proc processEvents( selector: Selector[Data];
                     keys: tuple[arr: array[64, ReadyKey], cnt: int];
@@ -243,6 +248,7 @@ proc processEvents( selector: Selector[Data];
       asyncdispatch.poll(0)
 
     of Client:
+      let clientData = data.clientData.addr
       if Event.Read in rKey.events:
         const size = 256
         var buf: array[size, char]
@@ -265,33 +271,33 @@ proc processEvents( selector: Selector[Data];
             break
 
           # Write buffer to our data.
-          let origLen = data.httpMsg.len
-          data.httpMsg.setLen(origLen + ret)
-          for i in 0 ..< ret: data.httpMsg[origLen+i] = buf[i]
+          let origLen = clientData.httpMsg.len
+          clientData.httpMsg.setLen(origLen + ret)
+          for i in 0 ..< ret: clientData.httpMsg[origLen+i] = buf[i]
 
-          if data.httpMsg.hasCorrectHeaders((var headersEndPos: int; headersEndPos)):
+          if clientData.httpMsg.hasCorrectHeaders((var headersEndPos: int; headersEndPos)):
             # First line and headers for request received.
-            data.headersEndPos = headersEndPos
-            data.headersFinished = true
+            clientData.headersEndPos = headersEndPos
+            clientData.headersFinished = true
             when not defined(release):
-              if data.respondQueue.len != 0:
+              if clientData.respondQueue.len != 0:
                 logging.warn("sendQueue isn't empty.")
-              if data.bytesResponded != 0:
+              if clientData.bytesResponded != 0:
                 logging.warn("bytesSent isn't empty.")
 
-            let waitingForBody = data.httpMsg.isNeedsBody and bodyInTransit(data)
+            let waitingForBody = clientData.httpMsg.isNeedsBody and clientData.bodyInTransit()
             if unlikely(waitingForBody): continue
 
-            for start in data.httpMsg.findHeadersBeginnings:
+            for start in clientData.httpMsg.findHeadersBeginnings:
               # For pipelined requests, we need to reset this flag.
-              data.headersFinished = true
-              data.requestID = genRequestID()
+              clientData.headersFinished = true
+              clientData.requestID = genRequestID()
 
               let request = Request(
                 selector: selector,
                 client: fd,
                 start: start,
-                requestID: data.requestID,
+                requestID: clientData.requestID,
               )
 
               proc isValidateRequest(req: Request): bool =
@@ -308,14 +314,14 @@ proc processEvents( selector: Selector[Data];
                 request.respond(Http501)
                 continue
 
-              data.reqFut = onRequest(request)
+              clientData.reqFut = onRequest(request)
               template validateResponse(): untyped =
-                if data.requestID == request.requestID:
-                  data.headersFinished = false
-              if data.reqFut.isNil:
+                if clientData.requestID == request.requestID:
+                  clientData.headersFinished = false
+              if clientData.reqFut.isNil:
                 validateResponse()
               else:
-                data.reqFut.addCallback proc(fut: Future[void]) =
+                clientData.reqFut.addCallback proc(fut: Future[void]) =
                   onRequestFutureComplete(fut, selector, fd)
                   validateResponse()
 
@@ -323,11 +329,11 @@ proc processEvents( selector: Selector[Data];
             # Assume there is nothing else for us right now and break.
             break
       elif Event.Write in rKey.events:
-        assert data.respondQueue.len > 0
-        assert data.bytesResponded < data.respondQueue.len
+        assert clientData.respondQueue.len > 0
+        assert clientData.bytesResponded < clientData.respondQueue.len
         # Write the sendQueue.
-        let leftover = data.respondQueue.len-data.bytesResponded
-        let ret = send(fd, addr data.respondQueue[data.bytesResponded],
+        let leftover = clientData.respondQueue.len-clientData.bytesResponded
+        let ret = send(fd, addr clientData.respondQueue[clientData.bytesResponded],
                        leftover, 0)
         if ret == -1:
           # Error!
@@ -339,12 +345,12 @@ proc processEvents( selector: Selector[Data];
             break
           raiseOSError(lastError)
 
-        data.bytesResponded.inc(ret)
+        clientData.bytesResponded.inc(ret)
 
-        if data.respondQueue.len == data.bytesResponded:
-          data.bytesResponded = 0
-          data.respondQueue.setLen(0)
-          data.httpMsg.setLen(0)
+        if clientData.respondQueue.len == clientData.bytesResponded:
+          clientData.bytesResponded = 0
+          clientData.respondQueue.setLen(0)
+          clientData.httpMsg.setLen(0)
           selector.updateHandle(fd, {Event.Read})
       else:
         assert false

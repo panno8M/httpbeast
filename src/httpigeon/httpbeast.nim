@@ -23,7 +23,7 @@ proc respondAsIs_unsafe*(req: Request; data: string) {.inline.} =
 
   block:
     let requestData {.inject.} = req.selector.getData(req.client).addr
-    requestData.respondQueue.add(data)
+    requestData.clientData.respondQueue.add(data)
   req.selector.updateHandle(req.client, {Event.Read, Event.Write})
 
 ##############
@@ -50,18 +50,18 @@ export httpMethod
 proc path*(req: Request): Option[string] {.inline.} =
   ## Parses the request's data to find the request target.
   if unlikely(req.client notin req.selector): return
-  parsePath(req.selector.getData(req.client).httpMsg, req.start)
+  parsePath(req.selector.getData(req.client).clientData.httpMsg, req.start)
 
 proc headers*(req: Request): Option[HttpHeaders] =
   ## Parses the request's data to get the headers.
   if unlikely(req.client notin req.selector): return
-  parseHeaders(req.selector.getData(req.client).httpMsg, req.start)
+  parseHeaders(req.selector.getData(req.client).clientData.httpMsg, req.start)
 
 proc body*(req: Request): Option[string] =
   ## Retrieves the body of the request.
-  let pos = req.selector.getData(req.client).headersEndPos
+  let pos = req.selector.getData(req.client).clientData.headersEndPos
   if pos == -1: return none(string)
-  result = req.selector.getData(req.client).httpMsg[pos..^1].some()
+  result = req.selector.getData(req.client).clientData.httpMsg[pos..^1].some()
 
   when not defined release:
     let length =
@@ -72,7 +72,7 @@ proc body*(req: Request): Option[string] =
 
 proc ip*(req: Request): string =
   ## Retrieves the IP address that the request was made from.
-  req.selector.getData(req.client).ip
+  req.selector.getData(req.client).clientData.ip
 
 proc forget*(req: Request) =
   ## Unregisters the underlying request's client socket from httpbeast's
@@ -81,7 +81,7 @@ proc forget*(req: Request) =
   ## This is useful when you want to register ``req.client`` in your own
   ## event loop, for example when wanting to integrate httpbeast into a
   ## websocket library.
-  assert req.selector.getData(req.client).requestID == req.requestID
+  assert req.selector.getData(req.client).clientData.requestID == req.requestID
   req.selector.unregister(req.client)
 
 
