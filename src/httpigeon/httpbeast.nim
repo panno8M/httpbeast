@@ -21,9 +21,8 @@ proc respondAsIs_unsafe*(req: Request; data: string) {.inline.} =
   ## careful when using it.
   if req.client notin req.selector: return
 
-  block:
-    let requestData {.inject.} = req.selector.getData(req.client).addr
-    requestData.clientData.respondQueue.add(data)
+  let reqData {.inject.} = req.selector.getData(req.client).requestData.addr
+  reqData.responseBuffer.add(data)
   req.selector.updateHandle(req.client, {Event.Read, Event.Write})
 
 ##############
@@ -43,6 +42,9 @@ proc respond*(req: Request; body: string; code = Http200) {.inline.} =
   ## **Warning:** This can only be called once in the OnRequest callback.
   req.respond(code, body)
 
+proc rawMessage*(req: Request): string {.inline.} =
+  req.selector.getData(req.client).requestData.httpMsg
+
 #################
 export httpMethod
 #################
@@ -50,18 +52,19 @@ export httpMethod
 proc path*(req: Request): Option[string] {.inline.} =
   ## Parses the request's data to find the request target.
   if unlikely(req.client notin req.selector): return
-  parsePath(req.selector.getData(req.client).clientData.httpMsg, req.start)
+  parsePath(req.selector.getData(req.client).requestData.httpMsg, req.start)
 
 proc headers*(req: Request): Option[HttpHeaders] =
   ## Parses the request's data to get the headers.
   if unlikely(req.client notin req.selector): return
-  parseHeaders(req.selector.getData(req.client).clientData.httpMsg, req.start)
+  parseHeaders(req.selector.getData(req.client).requestData.httpMsg, req.start)
 
 proc body*(req: Request): Option[string] =
   ## Retrieves the body of the request.
-  let pos = req.selector.getData(req.client).clientData.headersEndPos
+  let reqData = req.selector.getData(req.client).requestData
+  let pos = reqData.headersEndPos
   if pos == -1: return none(string)
-  result = req.selector.getData(req.client).clientData.httpMsg[pos..^1].some()
+  result = reqData.httpMsg[pos..^1].some()
 
   when not defined release:
     let length =
@@ -72,7 +75,7 @@ proc body*(req: Request): Option[string] =
 
 proc ip*(req: Request): string =
   ## Retrieves the IP address that the request was made from.
-  req.selector.getData(req.client).clientData.ip
+  req.selector.getData(req.client).requestData.ip
 
 proc forget*(req: Request) =
   ## Unregisters the underlying request's client socket from httpbeast's
@@ -81,7 +84,7 @@ proc forget*(req: Request) =
   ## This is useful when you want to register ``req.client`` in your own
   ## event loop, for example when wanting to integrate httpbeast into a
   ## websocket library.
-  assert req.selector.getData(req.client).clientData.requestID == req.requestID
+  assert req.selector.getData(req.client).requestData.requestID == req.requestID
   req.selector.unregister(req.client)
 
 
@@ -133,12 +136,17 @@ proc runInThread*(params: (OnRequest, Settings)) =
     sock.listen()
     sock
 
-  let selector = newSelector[Data]()
-  selector.registerHandle(server.getFd(), {Event.Read}, newData(Server))
+  let selector = newSelector[FdEventHandle]()
+  selector.registerHandle(
+    server.getFd(),
+    {Event.Read},
+    newFdEventHandle(Server))
 
   let disp = getGlobalDispatcher()
-  selector.registerHandle(getIoHandler(disp).getFd(), {Event.Read},
-                          newData(Dispatcher))
+  selector.registerHandle(
+    getIoHandler(disp).getFd(),
+    {Event.Read},
+    newFdEventHandle(Dispatcher))
 
   var ret: array[64, ReadyKey]
   while true:

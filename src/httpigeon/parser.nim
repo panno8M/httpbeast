@@ -1,6 +1,6 @@
 import options, httpcore, parseutils
 
-func parseHttpMethod*(httpMsg: string, start: int): Option[HttpMethod] =
+func parseHttpMethod*(httpMsg: openArray[char], start: int): Option[HttpMethod] =
   ## Parses the httpMsg to find the request HttpMethod.
 
   # HTTP methods are case sensitive.
@@ -66,9 +66,9 @@ func parseHeaders*(httpMsg: string, start: int): Option[HttpHeaders] =
 
   var i = start
   # Skip first line containing the method, path and HTTP version.
-  while httpMsg[i] != '\l': i.inc
+  while httpMsg[i] != '\l': inc i
 
-  i.inc # Skip \l
+  inc i # Skip \l
 
   var value = false
   var current: (string, string) = ("", "")
@@ -125,22 +125,13 @@ iterator findHeadersBeginnings*(httpMsg: string): int =
     httpMsg[cBound-4] == '\c' and httpMsg[cBound-3] == '\l' and
     httpMsg[cBound-2] == '\c' and httpMsg[cBound-1] == '\l'
   template hasBoundPiece(cBound: int): bool = httpMsg[cBound-1] in {'\c', '\l'}
-  while cBound <= len(httpMsg):
+  while cBound <= httpMsg.len:
     if not cBound.hasBoundPiece: inc cBound, 4; continue
     if not cBound.isBound: inc cBound; continue
 
     let bound = cBound
     inc cBound, 4
 
-    if likely(bound == len(httpMsg)): break
-    if parseHttpMethod(httpMsg, bound).isNone(): continue
+    if likely(bound == httpMsg.len): break
+    if parseHttpMethod(httpMsg, bound).isNone: continue
     yield bound
-
-  # while cBound < len(httpMsg):
-  #   if cBound.isBound:
-  #     let bound = cBound
-  #     if likely(bound == len(httpMsg)): break
-  #     if parseHttpMethod(httpMsg, bound).isNone(): continue
-  #     yield bound
-  #     inc cBound, 4
-  #   inc cBound
