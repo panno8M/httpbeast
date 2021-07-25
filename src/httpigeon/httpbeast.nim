@@ -133,12 +133,17 @@ proc runInThread*(params: (OnRequest, Settings)) =
     sock.listen()
     sock
 
-  let selector = newSelector[Data]()
-  selector.registerHandle(server.getFd(), {Event.Read}, newData(Server))
+  let selector = newSelector[FdEventHandle]()
+  selector.registerHandle(
+    server.getFd(),
+    {Event.Read},
+    newFdEventHandle(Server))
 
   let disp = getGlobalDispatcher()
-  selector.registerHandle(getIoHandler(disp).getFd(), {Event.Read},
-                          newData(Dispatcher))
+  selector.registerHandle(
+    getIoHandler(disp).getFd(),
+    {Event.Read},
+    newFdEventHandle(Dispatcher))
 
   var ret: array[64, ReadyKey]
   while true:

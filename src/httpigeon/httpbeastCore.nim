@@ -53,14 +53,14 @@ type
     ## Identifier for current request. Mainly for better detection of cross-talk.
     requestID: uint
 
-  Data = object
-    case fdKind: FdKind ## Determines the fd kind (server, client, dispatcher)
+  FdEventHandle = object
+    case kind: FdKind ## Determines the fd kind (server, client, dispatcher)
     of Client:
       clientData: ClientData
     else: discard
 
   Request* = object
-    selector: Selector[Data]
+    selector: Selector[FdEventHandle]
     client*: posix.SocketHandle
     # Determines where in the data buffer this request starts.
     # Only used for HTTP pipelining.
@@ -85,20 +85,21 @@ const
   serverInfo = "Httpigeon"
 
 
-func newData(fdKind: FdKind; ip = ""): Data =
-  case fdKind
+func newFdEventHandle(kind: FdKind; ip = ""): FdEventHandle =
+  case kind
   of Client:
-    Data( fdKind: fdKind,
-          clientData: ClientData(
-            headersEndPos: -1, ## By default we assume the fast case: end of data.
-            ip: ip
-          )
-        )
+    FdEventHandle(
+      kind: kind,
+      clientData: ClientData(
+        headersEndPos: -1, ## By default we assume the fast case: end of data.
+        ip: ip,
+        ),
+      )
   else:
-    Data(fdKind: fdKind)
+    FdEventHandle(kind: kind)
 
 proc onRequestFutureComplete( theFut: Future[void];
-                              selector: Selector[Data];
+                              selector: Selector[FdEventHandle];
                               fd: SocketHandle;
                             ) =
   if theFut.failed:
@@ -160,7 +161,7 @@ let genRequestID = block:
 
 proc dateResponseHeader(): string = now().utc().format("ddd, dd MMM yyyy HH:mm:ss 'GMT'")
 
-proc forgetCompletedRequest( selector: Selector[Data];
+proc forgetCompletedRequest( selector: Selector[FdEventHandle];
                              fd: posix.SocketHandle
                            ) =
   # TODO: Logging that the socket was closed.
@@ -169,8 +170,8 @@ proc forgetCompletedRequest( selector: Selector[Data];
     (not data.reqFut.isNil) and (not data.reqFut.finished)
 
   # TODO: Can POST body be sent with Connection: Close?
-  var data: ptr Data = addr selector.getData(fd)
-  if data.fdKind != Client: return
+  var data: ptr FdEventHandle = addr selector.getData(fd)
+  if data.kind != Client: return
 
   if data.clientData.hasRequestInProcess:
     # Close the socket only once the `onRequest` callback completes.
@@ -211,13 +212,13 @@ proc httpMethod(req: Request): Option[HttpMethod] {.inline.} =
   ## Parses the request's data to find the request HttpMethod.
   parseHttpMethod(req.selector.getData(req.client).clientData.httpMsg, req.start)
 
-proc processEvents( selector: Selector[Data];
+proc processEvents( selector: Selector[FdEventHandle];
                     keys: tuple[arr: array[64, ReadyKey], cnt: int];
                     onRequest: OnRequest;
                   ) =
   for rKey in keys.arr[0..<keys.cnt]:
     let fd = posix.SocketHandle(rKey.fd)
-    var data: ptr Data = addr(selector.getData(fd))
+    var fdEvent: ptr FdEventHandle = addr(selector.getData(fd))
     # Handle error events first.
     if Event.Error in rKey.events:
       if isDisconnectionError({SocketFlag.SafeDisconn}, rKey.errorCode):
@@ -225,7 +226,7 @@ proc processEvents( selector: Selector[Data];
         break
       raiseOSError(rKey.errorCode)
 
-    case data.fdKind
+    case fdEvent.kind
     of Server:
       assert Event.Read in rKey.events,
         "Only Read events are expected for the server"
@@ -240,7 +241,10 @@ proc processEvents( selector: Selector[Data];
 
         raiseOSError(lastError)
       client.setBlocking(false)
-      selector.registerHandle(client, {Event.Read}, newData(Client, ip=address))
+      selector.registerHandle(
+        client,
+        {Event.Read},
+        newFdEventHandle(Client, ip=address))
 
     of Dispatcher:
       # Run the dispatcher loop.
@@ -248,7 +252,7 @@ proc processEvents( selector: Selector[Data];
       asyncdispatch.poll(0)
 
     of Client:
-      let clientData = data.clientData.addr
+      let clientData = fdEvent.clientData.addr
       if Event.Read in rKey.events:
         const size = 256
         var buf: array[size, char]
