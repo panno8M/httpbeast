@@ -40,22 +40,52 @@ proc run*(pigeon: Pigeon) =
     if req.httpMethod.isNone or req.path.isNone: req.respond(Http404)
     let routingResult = routerPtr[].route(req.httpMethod.get(), req.path.get().parseUri())
 
+
+    var httpRequest = block:
+      let
+        httpMethod = req.httpMethod
+        path = req.path
+        headers = req.headers
+
+      if httpMethod.isNone or path.isNone or headers.isNone:
+        req.respond(Http400)
+
+      HttpRequest(
+        raw: req.rawMessage,
+        httpMethod: httpMethod.get(),
+        ip: req.ip,
+        path: path.get(),
+        headers: headers.get(),
+        body: req.body,
+      )
+
     if routingResult.status == routingFailure:
-      var responseFailure: Response = newResponse(Http404)
+      var responseFailure: HttpResponse = newResponse(Http404)
       if pigeon.extensions.isSome:
         # discard
         for ext in pigeon.extensions.get():
           if ext.onRoutingFailure.isSome:
             {.gcsafe.}:
-              let oResponse = ext.onRoutingFailure.get()(req)
+              let oResponse = ext.onRoutingFailure.get()(httpRequest)
               if oResponse.isSome:
                 responseFailure = oResponse.get()
       req.respond(responseFailure)
       return
 
-    req.respond routingResult.handler(req, routingResult.arguments)
+    httpRequest.pathArgs = routingResult.arguments.pathArgs
+    httpRequest.queryArgs = routingResult.arguments.queryArgs
 
-  run(onRequest)
+    req.respond if pigeon.extensions.isNone:
+      routingResult.handler(httpRequest)
+    else:
+      var response = routingResult.handler(httpRequest)
+      for ext in pigeon.extensions.get():
+        if ext.parseRegularResponse.isSome:
+          {.gcsafe.}:
+            ext.parseRegularResponse.get()(response, httpRequest)
+      response
+
+  run(onRequest, pigeon.serverSettings)
 
 proc map*(pigeon: Pigeon; handler: RequestHandler; httpMethod: HttpMethod; pattern: string; headers: HttpHeaders = nil) =
   pigeon.router.map(handler, httpMethod, pattern, headers)
@@ -65,6 +95,7 @@ template `$:`*(keyValuePairs: openArray[tuple[key: string, val: string]]): HttpH
 macro mappingOn*(pigeon: Pigeon; path = "/"; body: untyped): untyped =
   type RequestHook = object
     httpMethod: NimNode
+    # process: NimNode
     processBody: NimNode
   type NestHook = object
     path: NimNode
@@ -80,6 +111,7 @@ macro mappingOn*(pigeon: Pigeon; path = "/"; body: untyped): untyped =
         requestHookDef[2].expectKind nnkStmtList
         requestHooks.add RequestHook(
           httpMethod: requestHookDef[1],
+          # process: requestHookDef[2][0],
           processBody: requestHookDef[2],
         )
     of nnkPrefix:
@@ -99,14 +131,14 @@ macro mappingOn*(pigeon: Pigeon; path = "/"; body: untyped): untyped =
       result.add newCall(
         newIdentNode("map"),
         pigeon,
+        # requestHook.process,
         newNimNode(nnkLambda)
           .add(newEmptyNode())
           .add(newEmptyNode())
           .add(newEmptyNode())
           .add(newNimNode(nnkFormalParams)
-            .add(newIdentNode("Response"))
-            .add(newIdentDefs(newIdentNode("req"), newIdentNode("Request")))
-            .add(newIdentDefs(newIdentNode("args"), newIdentNode("RoutingArgs")))
+            .add(newIdentNode("HttpResponse"))
+            .add(newIdentDefs(newIdentNode("request"), newIdentNode("HttpRequest")))
           )
           .add(newEmptyNode())
           .add(newEmptyNode())
