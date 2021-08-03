@@ -1,18 +1,27 @@
 import httpbeast
 import nest
 import tables
+import options
 from sequtils import foldl
 from strutils import join
 type
-  RequestHandler* = proc(
-      req: Request;
-      args: RoutingArgs;
-    ): Response {.gcsafe.}
-
-  Response* = object
+  HttpRequest* = object
+    raw*: string
+    httpMethod*: HttpMethod
+    ip*: string
+    path*: string
+    pathArgs*: StringTableRef
+    queryArgs*: StringTableRef
+    headers*: HttpHeaders
+    body*: Option[string]
+  HttpResponse* = object
     code*: HttpCode
     additionalHeaders*: HttpHeaders
     body*: string
+
+  RequestHandler* = proc(
+      request: HttpRequest
+    ): HttpResponse {.gcsafe.}
 
 proc toString*(headers: HttpHeaders): string =
   var headerStrings: seq[string]
@@ -20,17 +29,17 @@ proc toString*(headers: HttpHeaders): string =
     headerstrings.add key & ": " & val.foldl(a & "; " & b)
   return headerStrings.join("\n")
 
-proc respond*(req: Request; response: Response) = req.respond(response.code, response.body, response.additionalHeaders)
+proc respond*(req: Request; response: HttpResponse) = req.respond(response.code, response.body, response.additionalHeaders)
 proc newResponse*(
       code: HttpCode;
       body: string = "";
       additionalHeaders: HttpHeaders = nil;
-    ): Response =
-  Response(
+    ): HttpResponse =
+  HttpResponse(
     code: code,
     additionalHeaders: additionalHeaders,
     body: body
   )
-proc newResponse*(body: string; additionalHeaders: HttpHeaders = nil): Response {.inline.} = newResponse(Http200, body, additionalHeaders)
-proc newResponse*(code: HttpCode; additionalHeaders: HttpHeaders): Response {.inline.} = newResponse(code, "", additionalHeaders)
-proc newResponse*(additionalHeaders: HttpHeaders): Response {.inline.} = newResponse(Http200, "", additionalHeaders)
+proc newResponse*(body: string; additionalHeaders: HttpHeaders = nil): HttpResponse {.inline.} = newResponse(Http200, body, additionalHeaders)
+proc newResponse*(code: HttpCode; additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(code, "", additionalHeaders)
+proc newResponse*(additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(Http200, "", additionalHeaders)
