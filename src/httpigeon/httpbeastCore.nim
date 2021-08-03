@@ -27,6 +27,9 @@ from sugar import
 from strutils import
   `%`
 
+from strformat import
+  `&`
+
 
 type
   FdKind = enum
@@ -233,8 +236,9 @@ proc processEvents( selector: Selector[FdEventHandle];
 
     case fdEvent.kind
     of Server:
+      when defined debugProcess:
+        echo "[I/O]: server"
       let fd = posix.SocketHandle(rKey.fd)
-      echo "[PROCESS] Server"
       assert Event.Read in rKey.events,
         "Only Read events are expected for the server"
 
@@ -254,15 +258,17 @@ proc processEvents( selector: Selector[FdEventHandle];
         newFdEventHandle(Client, ip=address))
 
     of Dispatcher:
+      when defined debugProcess:
+        echo "[I/O]: dispatcher"
       # Run the dispatcher loop.
-      echo "[PROCESS] Dispatcher"
       assert rKey.events == {Event.Read}
       asyncdispatch.poll(0)
 
     of Client:
       let clientFd = posix.SocketHandle(rKey.fd)
       if Event.Read in rKey.events:
-        echo "[PROCESS] Read from client socket"
+        when defined debugProcess:
+          echo "[I/O]: client.read"
         let reqDataSkeleton = fdEvent.requestData.addr
         var buf: array[256, char]
         # Read until EAGAIN. We take advantage of the fact that the client
@@ -330,6 +336,9 @@ proc processEvents( selector: Selector[FdEventHandle];
                 request.respond(Http501)
                 continue
 
+              when defined debugProcess:
+                echo &"Got Request to { parsePath(request.selector.getData(request.client).requestData.httpMsg, request.start) } from: {reqDataSkeleton.ip}"
+
               reqDataSkeleton.reqFut = onRequest(request)
               template validateResponse(): untyped =
                 if reqDataSkeleton.requestID == request.requestID:
@@ -345,7 +354,8 @@ proc processEvents( selector: Selector[FdEventHandle];
             # Assume there is nothing else for us right now and break.
             break
       elif Event.Write in rKey.events:
-        echo "[PROCESS] Write into client socket"
+        when defined debugProcess:
+          echo "[I/O]: client.write"
         let reqDataFilled = fdEvent.requestData.addr
         assert reqDataFilled.responseBuffer.len > 0
         assert reqDataFilled.bytesResponded < reqDataFilled.responseBuffer.len
@@ -354,8 +364,7 @@ proc processEvents( selector: Selector[FdEventHandle];
         let sentLen = clientFd.send(
           reqDataFilled.responseBuffer[reqDataFilled.bytesResponded].addr,
           leftover, 0)
-        if sentLen == -1:
-          # Error!
+        if sentLen == -1: # Error!
           let lastError = osLastError()
           if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
             break
