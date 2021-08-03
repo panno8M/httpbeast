@@ -2,26 +2,10 @@ import httpbeast
 import nest
 import tables
 import options
+import types
+export types
 from sequtils import foldl
 from strutils import join
-type
-  HttpRequest* = object
-    raw*: string
-    httpMethod*: HttpMethod
-    ip*: string
-    path*: string
-    pathArgs*: StringTableRef
-    queryArgs*: StringTableRef
-    headers*: HttpHeaders
-    body*: Option[string]
-  HttpResponse* = object
-    code*: HttpCode
-    additionalHeaders*: HttpHeaders
-    body*: string
-
-  RequestHandler* = proc(
-      request: HttpRequest
-    ): HttpResponse {.gcsafe.}
 
 proc toString*(headers: HttpHeaders): string =
   var headerStrings: seq[string]

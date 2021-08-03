@@ -4,6 +4,9 @@ from strformat import `&`
 from strutils import join, parseInt
 from osproc import countProcessors
 from deques import len
+import options
+
+import extensions
 
 export httpCore
 
@@ -120,9 +123,9 @@ proc newSettings*( port = Port(8080);
   )
 
 
-proc runInThread*(params: (OnRequest, Settings)) =
+proc runInThread*(params: (OnRequest, Settings, Option[seq[Extension]])) =
   ## running in each threads.
-  let (onRequest, settings) = params
+  let (onRequest, settings, oExtensions) = params
 
   for logger in settings.loggers:
     addHandler(logger)
@@ -148,6 +151,13 @@ proc runInThread*(params: (OnRequest, Settings)) =
     {Event.Read},
     newFdEventHandle(Dispatcher))
 
+  if oExtensions.isSome:
+    let extensions = oExtensions.get()
+    for extension in extensions:
+      if extension.perThreadInitialization.isSome():
+        {.gcsafe.}:
+          extension.perThreadInitialization.get()()
+
   var ret: array[64, ReadyKey]
   while true:
     const noTimeOut = -1
@@ -164,6 +174,7 @@ proc runInThread*(params: (OnRequest, Settings)) =
 
 proc run*( onRequest: OnRequest;
            settings = newSettings();
+           extensions = none(seq[Extension]);
            numThreadsDeterminate = useAllAvailable;
          ) =
   ## Starts the HTTP server and calls `onRequest` for each request.
@@ -179,14 +190,14 @@ proc run*( onRequest: OnRequest;
   case numThreads:
   of 0: raise HttpBeastDefect(msg:"numThread has set to 0. Set it to valid value")
   of 1: # run as single-thread app.
-    runInThread((onRequest, settings))
+    runInThread((onRequest, settings, extensions))
   else: # run as multi-thread app.
     if not settings.reusePort:
       raise HttpBeastDefect(msg: "--threads:on requires reusePort to be enabled in settings")
 
-    var threads = newSeq[Thread[(OnRequest, Settings)]](numThreads)
+    var threads = newSeq[Thread[(OnRequest, Settings, Option[seq[Extension]])]](numThreads)
     for thread in threads.mitems:
-      createThread(thread, runInThread, (onRequest, settings))
+      createThread(thread, runInThread, (onRequest, settings, extensions))
     echo &"Listening on port {settings.port}" # This line is used in the tester to signal readiness.
     joinThreads(threads)
 

@@ -85,7 +85,7 @@ proc run*(pigeon: Pigeon) =
             ext.parseRegularResponse.get()(response, httpRequest)
       response
 
-  run(onRequest, pigeon.serverSettings)
+  run(onRequest, pigeon.serverSettings, pigeon.extensions)
 
 proc map*(pigeon: Pigeon; handler: RequestHandler; httpMethod: HttpMethod; pattern: string; headers: HttpHeaders = nil) =
   pigeon.router.map(handler, httpMethod, pattern, headers)
