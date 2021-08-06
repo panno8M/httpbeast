@@ -2,10 +2,16 @@ import tables
 import httpcore
 import strutils
 import ../basic
-import sugar
 import options
-import strformat
 import sequtils
+
+type ParseRequestError* = object of IOError
+proc parseRequestError*(msg: string) {.noreturn, noinline.} =
+  ## raises an DbError exception with message `msg`.
+  var e: ref ParseRequestError
+  new(e)
+  e.msg = msg
+  raise e
 
 type BoundType = enum
   None, Nomal, End
@@ -25,17 +31,11 @@ proc isBound(str: ptr string; boundary: string; start: Natural): BoundType =
   return None
 
 proc multiPartFormData*( httpRequest: HttpRequest;
-                         outErrorMsg: var string
-                      #  ): seq[tuple[headers: TableRef[string, seq[string]]; body: string]] =
-                       ): TableRef[string, tuple[headers: TableRef[string, seq[string]]; body: string]] =
-  template returnWithError(msg: string): untyped =
-    outErrorMsg = msg; return
-
-  if not httpRequest.headers.hasKey("Content-Type"):
-    returnWithError("request has no \"Content-Type\" header")
-
+                       ): TableRef[string, tuple[headers: TableRef[string, seq[string]]; body: string]] {.raises: [ParseRequestError].} =
   let boundary = block:
-    let contentType = httpRequest.headers["Content-Type"].split("; ")
+    let contentType =
+      try: httpRequest.headers["Content-Type"].split("; ")
+      except: parseRequestError("request has no \"Content-Type\" header")
     var
       hasIdentifier: bool
       boundary: string
@@ -43,38 +43,26 @@ proc multiPartFormData*( httpRequest: HttpRequest;
       if ct == "multipart/form-data":
         hasIdentifier = true
       if ct[0] == 'b' and
-        ct[1] == 'o' and
-        ct[2] == 'u' and
-        ct[3] == 'n' and
-        ct[4] == 'd' and
-        ct[5] == 'a' and
-        ct[6] == 'r' and
-        ct[7] == 'y' and
-        ct[8] == '=':
+         ct[1] == 'o' and
+         ct[2] == 'u' and
+         ct[3] == 'n' and
+         ct[4] == 'd' and
+         ct[5] == 'a' and
+         ct[6] == 'r' and
+         ct[7] == 'y' and
+         ct[8] == '=':
         boundary = ct[9..^1]
       if hasIdentifier and boundary != "": break
 
     if not hasIdentifier:
-      returnWithError("Content-Type must be multipart/form-data")
+      parseRequestError("Content-Type must be multipart/form-data")
     if boundary == "":
-      returnWithError("Boundary is not specified in Content-Type.")
+      parseRequestError("Boundary is not specified in Content-Type.")
     boundary
 
-  if httpRequest.body.isNone:
-    returnWithError("Request needs body")
-
-  var body = httpRequest.body.get()
-
-  # if body[0..<(4+boundary.len)] != &"--{boundary}\c\l" or
-  #    body[^(6+boundary.len)..^1] != &"--{boundary}--\c\l":
-  #   returnWithError("Invalid data structure")
-
-  # var bodies = httpRequest.body.get()
-  #   .split("--" & boundary & "\c\l")[1..^1]
-  # bodies[^1] = bodies[^1][0..^(6+boundary.len)]
-
-  # echo httpRequest.body
-  # echo bodies
+  var body =
+    try: httpRequest.body.get()
+    except: parseRequestError("Request body is required")
 
   type SearchMode = enum
     Bound, Header, Body
@@ -84,7 +72,7 @@ proc multiPartFormData*( httpRequest: HttpRequest;
     mode = Bound
   while true:
     if i >= body.len:
-      returnWithError("Invalid structure")
+      parseRequestError("Invalid structure")
 
     case mode
     of Bound:
@@ -96,7 +84,9 @@ proc multiPartFormData*( httpRequest: HttpRequest;
       of End:
         result = newTable[string, tuple[headers: TableRef[string, seq[string]], body: string]](resultData.len)
         for resultDatum in resultData:
-          let name = resultDatum.headers["Content-Disposition"].filterIt(it[0..3] == "name")[0][6..^2]
+          let name =
+            try: resultDatum.headers["Content-Disposition"].filterIt(it[0..3] == "name")[0][6..^2]
+            except: parseRequestError("\"Content-Disposition\" header is required in each section")
           result[name] = resultDatum
         return result
 

@@ -24,6 +24,18 @@ proc newResponse*(
     additionalHeaders: additionalHeaders,
     body: body
   )
-proc newResponse*(body: string; additionalHeaders: HttpHeaders = nil): HttpResponse {.inline.} = newResponse(Http200, body, additionalHeaders)
 proc newResponse*(code: HttpCode; additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(code, "", additionalHeaders)
+proc newResponse*(body: string; additionalHeaders: HttpHeaders = nil): HttpResponse {.inline.} = newResponse(Http200, body, additionalHeaders)
 proc newResponse*(additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(Http200, "", additionalHeaders)
+
+proc ok*(body = ""; additionalHeaders: HttpHeaders = nil): HttpResponse {.inline.} = newResponse(Http200, body, additionalHeaders)
+proc ok*(additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(Http200, "", additionalHeaders)
+
+proc badRequest*(body = ""; additionalHeaders: HttpHeaders = nil): HttpResponse {.inline.} = newResponse(Http400, body, additionalHeaders)
+proc badRequest*(additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(Http400, "", additionalHeaders)
+
+proc notFound*(body = ""; additionalHeaders: HttpHeaders = nil): HttpResponse {.inline.} = newResponse(Http404, body, additionalHeaders)
+proc notFound*(additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(Http404, "", additionalHeaders)
+
+proc internalServerError*(body = ""; additionalHeaders: HttpHeaders = nil): HttpResponse {.inline.} = newResponse(Http500, body, additionalHeaders)
+proc internalServerError*(additionalHeaders: HttpHeaders): HttpResponse {.inline.} = newResponse(Http500, "", additionalHeaders)
