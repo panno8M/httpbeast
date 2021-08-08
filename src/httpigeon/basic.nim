@@ -1,7 +1,5 @@
 import httpbeast
-import nest
 import tables
-import options
 import types
 export types
 from sequtils import foldl

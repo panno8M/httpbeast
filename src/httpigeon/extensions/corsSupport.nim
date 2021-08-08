@@ -23,7 +23,8 @@ proc followCORS*( responseHeaders: var HttpHeaders;
                   allowedMethods: openArray[HttpMethod] = allowedMethodsDefault;
                   allowedHeaders: openArray[string]     = allowedHeadersDefault;
                 ) =
-  assert not (responseHeaders.isNil or requestHeaders.isNil)
+  if (responseHeaders.isNil or requestHeaders.isNil):
+    return
 
   block Set_Allow_Origin:
     if responseHeaders.hasKey(acAllowOrigin) or
