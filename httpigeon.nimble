@@ -8,8 +8,7 @@ srcDir        = "src"
 
 # Dependencies
 
-requires "nim >= 0.18.0"
-requires "RxNim"
+requires "nim >= 1.5.1"
 
 # Test dependencies
 requires "asynctools#0e6bdc3ed5bae8c7cc9"
